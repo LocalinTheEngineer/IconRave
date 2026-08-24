@@ -51,6 +51,11 @@ public class MainForm : Form
     {
         try { File.WriteAllText(LogPath, $"=== Başlatıldı {DateTime.Now} ==={Environment.NewLine}"); } catch { }
 
+        // Windows'un varsayılan zamanlayıcı hassasiyeti (~15ms, tutarsız) yerine
+        // 1ms hassasiyete geçiyoruz - animasyonlar (düşme, fırlatma, ses senkronu)
+        // daha pürüzsüz/akıcı görünür.
+        timeBeginPeriod(1);
+
         WindowState = FormWindowState.Minimized;
         ShowInTaskbar = false;
         Opacity = 0;
@@ -398,6 +403,7 @@ public class MainForm : Form
         _iconManager.Dispose();
         _audioAnalyzer?.Dispose();
         _overlay?.Close();
+        timeEndPeriod(1);
         if (_trayIcon != null)
         {
             _trayIcon.Visible = false;

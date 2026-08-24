@@ -1,49 +1,61 @@
-# Desktop Icon Dropper — 1. Adım
+# IconRave 🎉
 
-Bu, projenin **ilk aşaması**: masaüstündeki bir simgeye tıkladığında, o simge
-yerçekimi + sekme fiziğiyle görev çubuğunun üstüne "düşüyor".
+Windows masaüstü simgelerinizi gerçek bir fizik motoruyla hayata geçiren eğlenceli bir masaüstü aracı.
 
-Ses senkronizasyonu (2. proje adımı) henüz eklenmedi — NAudio kütüphanesi
-projeye şimdiden eklendi, bir sonraki adımda kullanacağız.
+Uygulama açıldığı anda tüm masaüstü simgeleriniz yerçekimiyle düşer, takla atarak
+rastgele noktalara fırlar; istediğiniz simgeyi tutup elle fırlatabilir, ekran
+kenarlarına çarpıp sekmesini izleyebilirsiniz. Üstüne, bilgisayarınızda çalan
+sistem sesini gerçek zamanlı analiz ederek, müzikteki vuruşlara göre simgelerin
+zıplamasını sağlar.
 
-## Nasıl çalıştırılır (Windows'ta)
+## Özellikler
 
-1. **Visual Studio Community** kurulu değilse ücretsiz indir:
-   https://visualstudio.microsoft.com/tr/vs/community/
-   Kurulum ekranında **".NET Desktop Development"** iş yükünü işaretlemeyi unutma.
+- **Fizik tabanlı düşme** - Açılışta tüm simgeler yerçekimiyle, hafif yaprak gibi
+  sallanarak düşer ve rastgele bir noktaya takla atarak yerleşir
+- **Elle sürükle-fırlat** - Bir simgeyi tutup fareyle hızlıca çekip bırakınca,
+  gerçek fare hızınızla fırlar; ekranın kenarlarına top gibi çarpıp seker
+- **Ses senkronizasyonu** - WASAPI loopback + FFT ile sistem sesini analiz eder;
+  müzikte vuruş (beat) algıladığında tüm simgeler birlikte zıplar
+- **Gerçek Windows simgeleri döner** - Simgeler uçarken/takla atarken kendi
+  gerçek ikon görselleriyle döner (özel bir overlay katmanı sayesinde)
 
-2. Bu klasördeki tüm dosyaları (`DesktopIconDropper.csproj` dahil) kendi
-   bilgisayarına bir klasöre kopyala.
+## Gereksinimler
 
-3. Visual Studio'yu aç → **"Open a project or solution"** yerine
-   **"Open a local folder"** seç → bu klasörü seç.
-   (Ya da terminalden: `dotnet run` — .NET 6 SDK kurulu olmalı.)
+- Windows 10 veya 11
+- [.NET 6.0 SDK](https://dotnet.microsoft.com/download/dotnet/6.0)
+- (Geliştirme için, isteğe bağlı) Visual Studio 2022+ - ".NET Desktop Development" iş yükü ile
 
-4. Üstteki yeşil ▶ **Start** butonuna bas (ya da terminalde `dotnet run`).
+## Çalıştırma
 
-5. Uygulama açıldığında görünür bir pencere ÇIKMAZ — bu normal, bilerek öyle
-   tasarlandı. Sağ altta, saat yanındaki sistem tepsisinde küçük bir ikon
-   belirecek. Uygulamayı kapatmak istersen o ikona sağ tıklayıp "Çıkış" de.
+```bash
+git clone https://github.com/LocalinTheEngineer/IconRave.git
+cd IconRave
+dotnet run
+```
 
-6. Masaüstünde bir simgeye (kısayol, dosya, klasör fark etmez) tıkla —
-   simgenin görev çubuğuna doğru düşüp sekmesini görmelisin.
+Uygulama görünür bir pencere açmaz; sistem tepsisinde (saat yanında) küçük bir
+ikon belirir. Çıkmak için o ikona sağ tıklayıp **Çıkış**'ı seçin.
 
-## Bilinen sınırlamalar / test ederken dikkat et
+## Nasıl çalışır (teknik özet)
 
-- Bu, Windows'un **belgelenmemiş iç yapısını** (SysListView32) kullanıyor.
-  Yani Windows 10 ve 11'de test edilmesi gerekiyor — sürüme göre küçük
-  farklar çıkabilir.
-- "Simgeleri otomatik düzenle" (Auto arrange icons) açıksa, Windows
-  simgeleri anında eski konumuna geri çekebilir. Masaüstünde sağ tık →
-  Görünüm → "Simgeleri otomatik yerleştir" seçeneğini KAPALI yapman gerekebilir.
-- Antivirüs programları, global mouse hook + explorer.exe'ye erişim yapan
-  uygulamaları bazen şüpheli bulup uyarı verebilir. Bu normal, kaynak kodun
-  tamamı elimizde ve zararsız.
+Windows masaüstü simgeleri aslında `explorer.exe` içindeki gizli bir
+`SysListView32` liste kutusudur. Bu proje, Win32 API'ye doğrudan erişip
+(`FindWindow`, `SendMessage`, cross-process bellek okuma/yazma gibi
+belgelenmemiş teknikler) simgelerin konumlarını okuyup değiştiriyor. Gerçek
+simgeler döndürülemediği için, bir simge havadayken gerçek simge geçici
+olarak gizlenir ve yerine şeffaf bir üst katman (overlay) penceresinde
+döndürerek çizilen bir kopyası gösterilir; yere inince gerçek simge tekrar
+görünür olur.
 
-## Bana geri bildirim ver
+## Bilinen sınırlamalar
 
-Çalıştırıp test ettikten sonra bana şunu söyle:
-- Simgeler düşüyor mu, hiç tepki yok mu, yoksa hata mesajı mı çıkıyor?
-- Hata çıkarsa, tam metnini kopyala yapıştır bana at.
+- Belgelenmemiş Windows iç yapılarını kullandığı için Windows sürümüne göre
+  küçük davranış farkları olabilir
+- "Simgeleri otomatik yerleştir" ve "Simgeleri kılavuza hizala" seçeneklerinin
+  kapalı olması önerilir (masaüstünde sağ tık → Görünüm)
+- Ses senkronizasyonu varsayılan ses çıkış cihazını dinler; bazı özel ses
+  sürücüsü yapılandırmalarında çalışmayabilir
 
-Bu bilgiyle bir sonraki adıma (fizik ince ayarı + ses senkronizasyonu) geçeriz.
+## Lisans
+
+Bu proje kişisel/eğlence amaçlı geliştirilmiştir.

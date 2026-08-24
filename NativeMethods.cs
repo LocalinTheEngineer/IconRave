@@ -48,6 +48,13 @@ internal static class NativeMethods
     [DllImport("kernel32.dll")]
     public static extern nint GetModuleHandle(string lpModuleName);
 
+    // --- Daha hassas zamanlayıcı (animasyonun daha akıcı/titremesiz olması için) ---
+    [DllImport("winmm.dll")]
+    public static extern uint timeBeginPeriod(uint uPeriod);
+
+    [DllImport("winmm.dll")]
+    public static extern uint timeEndPeriod(uint uPeriod);
+
     // --- Süreçler arası bellek erişimi (cross-process memory) ---
     // LVM_HITTEST ve LVM_GETITEMPOSITION mesajları, veriyi bir POINTER (bellek adresi)
     // üzerinden alıp veriyor. Ama bizim programımız ile masaüstünü yöneten explorer.exe
