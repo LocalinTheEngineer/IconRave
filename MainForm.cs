@@ -334,7 +334,7 @@ public class MainForm : Form
     {
         if (_audioAnalyzer == null) return;
 
-        float level = _audioAnalyzer.OverallVolume;
+        float level = _audioAnalyzer.VocalLevel;
 
         _volumeLogCounter++;
         if (_volumeLogCounter >= 90) // ~1.5 saniyede bir

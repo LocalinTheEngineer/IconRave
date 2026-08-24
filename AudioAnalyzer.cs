@@ -17,6 +17,29 @@ internal class AudioAnalyzer : IDisposable
     public float[] BandLevels { get; } = new float[BandCount];
     public float OverallVolume { get; private set; }
 
+    // İnsan sesinin (vokal) en çok yoğunlaştığı frekans aralığı - yaklaşık
+    // 300Hz-3000Hz. Bant dizisi logaritmik olduğu için bu aralık kabaca
+    // 4-8 numaralı bantlara denk geliyor. Enstrümanlardan tamamen izole
+    // edemesek de (gerçek vokal ayrıştırma yapay zeka gerektirir), genel
+    // ses seviyesinden çok daha "vokale duyarlı" bir sonuç veriyor.
+    private const int VocalBandStart = 4;
+    private const int VocalBandEnd = 8; // dahil
+
+    public float VocalLevel
+    {
+        get
+        {
+            float sum = 0;
+            int count = 0;
+            for (int i = VocalBandStart; i <= VocalBandEnd && i < BandCount; i++)
+            {
+                sum += BandLevels[i];
+                count++;
+            }
+            return count > 0 ? sum / count : 0f;
+        }
+    }
+
     private WasapiLoopbackCapture? _capture;
 
     private const int FftLength = 1024;
