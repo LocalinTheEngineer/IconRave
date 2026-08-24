@@ -1,0 +1,13 @@
+# Derleme çıktıları - bunlar her bilgisayarda yeniden oluşturulur, repoda gereksiz yer kaplar
+bin/
+obj/
+
+# Visual Studio'nun kendi geçici/ayar klasörü
+.vs/
+
+# Test sırasında oluşturduğumuz teşhis (debug) dosyası
+debug.log
+
+# Kullanıcıya özel Visual Studio ayarları
+*.user
+*.suo
