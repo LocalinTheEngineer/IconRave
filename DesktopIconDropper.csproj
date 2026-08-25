@@ -8,11 +8,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>DesktopIconDropper</AssemblyName>
+    <!-- Tek dosyalık .exe yayınlarken boyutu küçültmek için (dotnet publish sırasında etkili) -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Sistem sesini dinlemek için (3. adımda kullanacağız, şimdiden ekliyoruz) -->
+    <!-- Sistem sesini dinlemek için -->
     <PackageReference Include="NAudio" Version="2.2.1" />
+    <!-- Windows kayıt defterine erişim (otomatik başlatma ayarı için) -->
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
   </ItemGroup>
 
 </Project>

@@ -38,12 +38,13 @@ internal class FallingIcon : IIconAnimation
     private float _hopInitialVelocityY;
     private readonly float _totalSpin;
 
-    private const float Gravity = 1400f;
+    private readonly AppSettings _settings;
 
     public FallingIcon(int iconIndex, float startX, float startY, float targetY,
-        float minX, float maxX, float scatterBandHeight, Random rng)
+        float minX, float maxX, float scatterBandHeight, Random rng, AppSettings settings)
     {
         IconIndex = iconIndex;
+        _settings = settings;
         X = startX;
         _baseX = startX;
         Y = startY;
@@ -67,7 +68,7 @@ internal class FallingIcon : IIconAnimation
 
         int spins = rng.Next(1, 3);
         float direction = rng.NextDouble() < 0.5 ? -1f : 1f;
-        _totalSpin = 360f * spins * direction;
+        _totalSpin = 360f * spins * direction * settings.SpinAmount;
     }
 
     public void Update(float deltaSeconds)
@@ -84,7 +85,7 @@ internal class FallingIcon : IIconAnimation
 
         if (Phase == FallPhase.Falling)
         {
-            VelocityY += Gravity * deltaSeconds;
+            VelocityY += _settings.Gravity * deltaSeconds;
             Y += VelocityY * deltaSeconds;
 
             float sway = _swayAmplitude * (float)Math.Sin(_elapsedSeconds * _swayFrequency + _swayPhase);
@@ -101,7 +102,7 @@ internal class FallingIcon : IIconAnimation
                 // İniş yüksekliği kalkış yüksekliğinden farklı olabileceği için
                 // (rastgele scatter), asimetrik bir yay hesaplıyoruz:
                 float deltaY = _hopLandingY - _hopStartY;
-                _hopInitialVelocityY = (deltaY - 0.5f * Gravity * _hopDuration * _hopDuration) / _hopDuration;
+                _hopInitialVelocityY = (deltaY - 0.5f * _settings.Gravity * _hopDuration * _hopDuration) / _hopDuration;
 
                 _hopElapsed = 0f;
                 Phase = FallPhase.Hopping;
@@ -115,7 +116,7 @@ internal class FallingIcon : IIconAnimation
             float t = Math.Min(_hopElapsed, _hopDuration);
 
             X = _hopStartX + _hopVelocityX * t;
-            Y = _hopStartY + _hopInitialVelocityY * t + 0.5f * Gravity * t * t;
+            Y = _hopStartY + _hopInitialVelocityY * t + 0.5f * _settings.Gravity * t * t;
             RotationDegrees = _totalSpin * (t / _hopDuration);
 
             if (_hopElapsed >= _hopDuration)

@@ -25,20 +25,30 @@ internal class AudioAnalyzer : IDisposable
     private const int VocalBandStart = 4;
     private const int VocalBandEnd = 8; // dahil
 
-    public float VocalLevel
+    public float VocalLevel => AverageBands(VocalBandStart, VocalBandEnd);
+    public float BassLevel => AverageBands(0, 3);
+    public float TrebleLevel => AverageBands(8, BandCount - 1);
+
+    private float AverageBands(int start, int end)
     {
-        get
+        float sum = 0;
+        int count = 0;
+        for (int i = start; i <= end && i < BandCount; i++)
         {
-            float sum = 0;
-            int count = 0;
-            for (int i = VocalBandStart; i <= VocalBandEnd && i < BandCount; i++)
-            {
-                sum += BandLevels[i];
-                count++;
-            }
-            return count > 0 ? sum / count : 0f;
+            sum += BandLevels[i];
+            count++;
         }
+        return count > 0 ? sum / count : 0f;
     }
+
+    // Seçilen moda göre ilgili seviyeyi döner
+    public float GetLevel(AudioMode mode) => mode switch
+    {
+        AudioMode.Bass => BassLevel,
+        AudioMode.Treble => TrebleLevel,
+        AudioMode.Overall => OverallVolume,
+        _ => VocalLevel
+    };
 
     private WasapiLoopbackCapture? _capture;
 

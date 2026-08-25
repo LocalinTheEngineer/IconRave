@@ -4,7 +4,7 @@ namespace DesktopIconDropper;
 
 // Bu form kullanıcıya GÖRÜNMEZ. Sadece arka planda çalışıp animasyon
 // döngüsünü yönetmek için var. Kullanıcı, sistem tepsisindeki
-// (saat yanındaki) küçük ikondan uygulamayı kapatabilir.
+// (saat yanındaki) ikondan ayarları açabilir veya uygulamadan çıkabilir.
 public class MainForm : Form
 {
     private readonly DesktopIconManager _iconManager = new();
@@ -14,23 +14,26 @@ public class MainForm : Form
     private readonly Random _rng = new();
     private readonly Dictionary<int, Bitmap> _iconBitmaps = new();
     private readonly Dictionary<int, (float X, float Y)> _finalPositions = new();
+    // Uygulama açıldığındaki orijinal simge konumları - çıkışta geri döndürmek için
+    private readonly Dictionary<int, (int X, int Y)> _originalPositions = new();
     private NotifyIcon? _trayIcon;
     private OverlayForm? _overlay;
+    private SettingsForm? _settingsForm;
     private int _reassertCounter;
 
-    // --- Ses senkronizasyonu (genel ses seviyesine göre, TÜM simgeler birlikte) ---
+    private readonly AppSettings _settings = AppSettings.Load();
+
+    // --- Ses senkronizasyonu ---
     private AudioAnalyzer? _audioAnalyzer;
-    private float _volumeBaseline; // sesin yavaşça takip eden "taban" seviyesi
+    private float _volumeBaseline;
     private DateTime _lastGlobalTrigger = DateTime.MinValue;
-    private const float OverallRiseThreshold = 0.10f; // tabanın ne kadar üzerine çıkması gerekiyor
-    private const float MinOverallLevel = 0.06f;
-    private const float BaselineSmoothing = 0.06f; // taban ne kadar yavaş takip etsin
-    private static readonly TimeSpan GlobalCooldown = TimeSpan.FromMilliseconds(110);
-    private int _volumeLogCounter;
+    private const float BaseRiseThreshold = 0.10f; // duyarlılık ayarıyla bölünür
+    private const float BaseMinLevel = 0.06f;
+    private const float BaselineSmoothing = 0.06f;
 
     // --- Sürükleme (drag & fırlatma) durumu ---
     private int? _draggingIndex;
-    private float _dragX, _dragY; // liste kutusuna göre YEREL koordinat
+    private float _dragX, _dragY;
     private readonly List<(DateTime Time, float X, float Y)> _dragSamples = new();
 
     private static readonly string LogPath = Path.Combine(
@@ -51,9 +54,8 @@ public class MainForm : Form
     {
         try { File.WriteAllText(LogPath, $"=== Başlatıldı {DateTime.Now} ==={Environment.NewLine}"); } catch { }
 
-        // Windows'un varsayılan zamanlayıcı hassasiyeti (~15ms, tutarsız) yerine
-        // 1ms hassasiyete geçiyoruz - animasyonlar (düşme, fırlatma, ses senkronu)
-        // daha pürüzsüz/akıcı görünür.
+        // Windows'un varsayılan zamanlayıcı hassasiyeti (~15ms) yerine 1ms -
+        // animasyonlar daha pürüzsüz görünür.
         timeBeginPeriod(1);
 
         WindowState = FormWindowState.Minimized;
@@ -79,22 +81,23 @@ public class MainForm : Form
         _overlay.Show();
 
         PreloadIconBitmaps();
+        SaveOriginalPositions();
 
         _mouseHook.LeftButtonDown += OnLeftButtonDown;
         _mouseHook.MouseMove += OnMouseMove;
         _mouseHook.LeftButtonUp += OnLeftButtonUp;
         _mouseHook.Start();
-        Log("Fare kancası (mouse hook) başlatıldı.");
 
         _animationTimer.Interval = 16; // ~60fps
         _animationTimer.Tick += OnAnimationTick;
         _animationTimer.Start();
 
-        DropAllIconsAutomatically();
+        if (_settings.DropIconsOnStartup)
+            DropAllIconsAutomatically();
 
         _audioAnalyzer = new AudioAnalyzer();
         bool audioOk = _audioAnalyzer.Start();
-        Log(audioOk ? "Ses analizi başlatıldı." : "UYARI: Ses analizi başlatılamadı, bu özellik olmadan devam ediliyor.");
+        Log(audioOk ? "Ses analizi başlatıldı." : "UYARI: Ses analizi başlatılamadı.");
     }
 
     private void SetupTrayIcon()
@@ -103,12 +106,39 @@ public class MainForm : Form
         {
             Icon = SystemIcons.Application,
             Visible = true,
-            Text = "Desktop Icon Dropper - çıkmak için tıkla"
+            Text = "IconRave"
         };
 
         var menu = new ContextMenuStrip();
+        menu.Items.Add("Ayarlar...", null, (_, _) => OpenSettings());
+        menu.Items.Add("Simgeleri yeniden düşür", null, (_, _) => DropAllIconsAutomatically());
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Çıkış", null, (_, _) => Application.Exit());
         _trayIcon.ContextMenuStrip = menu;
+
+        // Tepsi ikonuna çift tıklayınca da ayarlar açılsın
+        _trayIcon.DoubleClick += (_, _) => OpenSettings();
+    }
+
+    private void OpenSettings()
+    {
+        if (_settingsForm is { IsDisposed: false })
+        {
+            _settingsForm.BringToFront();
+            _settingsForm.Focus();
+            return;
+        }
+
+        _settingsForm = new SettingsForm(_settings, OnSettingsChanged);
+        _settingsForm.Show();
+    }
+
+    // Ayarlar değiştiğinde çağrılır. Çoğu ayar (fizik, ses) doğrudan _settings
+    // üzerinden okunduğu için anında etkili olur; burada sadece özel durumları işliyoruz.
+    private void OnSettingsChanged()
+    {
+        if (!_settings.AudioReactionEnabled)
+            _volumeBaseline = 0f;
     }
 
     private void PreloadIconBitmaps()
@@ -121,6 +151,17 @@ public class MainForm : Form
             _iconBitmaps[i] = bmp ?? SystemIcons.Application.ToBitmap();
         }
         Log($"{count} simge için resimler önceden yüklendi.");
+    }
+
+    // Uygulama açılışındaki konumları sakla - "çıkışta geri döndür" ayarı için
+    private void SaveOriginalPositions()
+    {
+        int count = _iconManager.GetIconCount();
+        for (int i = 0; i < count; i++)
+        {
+            var pos = _iconManager.GetIconPosition(i);
+            _originalPositions[i] = (pos.X, pos.Y);
+        }
     }
 
     private void DropAllIconsAutomatically()
@@ -137,7 +178,6 @@ public class MainForm : Form
         Log($"{count} simge için otomatik düşme animasyonu başlatıldı.");
     }
 
-    // Program açılışındaki otomatik düşme + rastgele fırlama (FallingIcon kullanır)
     private void StartAutoFall(int index, RECT listRect, float startX, float startY)
     {
         _activeAnimations.RemoveAll(a => a.IconIndex == index);
@@ -154,21 +194,21 @@ public class MainForm : Form
         float scatterBandHeight = 15f;
 
         _iconManager.SetIconPosition(index, -3000, -3000);
-        _activeAnimations.Add(new FallingIcon(index, startX, startY, targetY, minX, maxX, scatterBandHeight, _rng));
+        _activeAnimations.Add(new FallingIcon(index, startX, startY, targetY, minX, maxX,
+            scatterBandHeight, _rng, _settings));
     }
 
-    // --- Sürükleyip fırlatma akışı ---
+    // --- Sürükleyip fırlatma ---
 
     private void OnLeftButtonDown(int screenX, int screenY)
     {
+        if (!_settings.EnableDragThrow) return;
+
         int index = _iconManager.HitTest(screenX, screenY);
-        Log($"MouseDown ({screenX},{screenY}) -> HitTest index: {index}");
         if (index < 0) return;
 
         RECT listRect = _iconManager.GetListViewScreenRect();
 
-        // Bu simge şu an animasyondaysa/sabitse, sürüklemeye başlarken elimizdeki
-        // en güncel görünür konumunu kullan.
         float localX, localY;
         if (_finalPositions.TryGetValue(index, out var last))
         {
@@ -184,15 +224,13 @@ public class MainForm : Form
 
         _activeAnimations.RemoveAll(a => a.IconIndex == index);
         _finalPositions.Remove(index);
-        _iconManager.SetIconPosition(index, -3000, -3000); // gerçek simgeyi gizle, overlay gösterecek
+        _iconManager.SetIconPosition(index, -3000, -3000);
 
         _draggingIndex = index;
         _dragX = localX;
         _dragY = localY;
         _dragSamples.Clear();
         _dragSamples.Add((DateTime.Now, localX, localY));
-
-        Log($"Sürükleme başladı: index {index} konum ({localX},{localY})");
     }
 
     private void OnMouseMove(int screenX, int screenY)
@@ -205,7 +243,6 @@ public class MainForm : Form
 
         var now = DateTime.Now;
         _dragSamples.Add((now, _dragX, _dragY));
-        // sadece son ~150ms'lik örnekleri tut (hız hesaplamak için yeterli)
         _dragSamples.RemoveAll(s => (now - s.Time).TotalMilliseconds > 150);
     }
 
@@ -217,7 +254,6 @@ public class MainForm : Form
 
         RECT listRect = _iconManager.GetListViewScreenRect();
 
-        // Fare hızını, son birkaç örnekten (konum farkı / zaman farkı) hesaplıyoruz.
         float velocityX = 0, velocityY = 0;
         if (_dragSamples.Count >= 2)
         {
@@ -231,8 +267,6 @@ public class MainForm : Form
             }
         }
 
-        // Neredeyse hiç sürüklenmemişse (basit tıklama) - küçük rastgele bir
-        // fırlatma hızı ver, yine de eğlenceli bir tepki olsun.
         bool wasRealDrag = Math.Abs(velocityX) > 30 || Math.Abs(velocityY) > 30;
         if (!wasRealDrag)
         {
@@ -240,9 +274,11 @@ public class MainForm : Form
             velocityY = (float)(-600 - _rng.NextDouble() * 400);
         }
 
-        // Fare olayları bazen çok yakın zamanlı gelip gerçekçi olmayan devasa
-        // hızlar hesaplanmasına sebep olabiliyor (simge ekranın köşesine sıkışıp
-        // kalıyordu) - bu yüzden makul bir üst sınır koyuyoruz.
+        // Kullanıcının ayarladığı fırlatma gücü çarpanı
+        velocityX *= _settings.ThrowPowerMultiplier;
+        velocityY *= _settings.ThrowPowerMultiplier;
+
+        // Aşırı büyük hızlara üst sınır (simge köşeye sıkışmasın)
         const float MaxThrowSpeed = 2600f;
         float speed = MathF.Sqrt(velocityX * velocityX + velocityY * velocityY);
         if (speed > MaxThrowSpeed)
@@ -254,17 +290,13 @@ public class MainForm : Form
 
         var screenPoint = new Point(listRect.Left + (int)_dragX, listRect.Top + (int)_dragY);
         var screen = Screen.FromPoint(screenPoint);
-
         var (minX, maxX, minY, floorY) = ComputeThrowBounds(screen, listRect);
-
-        Log($"Fırlatıldı: index {index} hız ({velocityX:0},{velocityY:0}) gerçekSürükleme={wasRealDrag}");
 
         _activeAnimations.RemoveAll(a => a.IconIndex == index);
         _activeAnimations.Add(new ThrownIcon(index, _dragX, _dragY, velocityX, velocityY,
-            minX, maxX, minY, floorY, _rng));
+            minX, maxX, minY, floorY, _rng, _settings));
     }
 
-    // Bir simgenin çarpabileceği ekran sınırlarını (yerel liste kutusu koordinatlarında) hesaplar
     private static (float minX, float maxX, float minY, float floorY) ComputeThrowBounds(Screen screen, RECT listRect)
     {
         float minX = screen.Bounds.Left - listRect.Left;
@@ -284,7 +316,6 @@ public class MainForm : Form
         RECT listRect = _iconManager.GetListViewScreenRect();
         bool anyActive = _activeAnimations.Count > 0 || _draggingIndex != null;
 
-        // Şu an elde sürüklenen simgeyi (varsa) çiz
         if (_draggingIndex is int dragIdx)
         {
             Bitmap dragBmp = _iconBitmaps.TryGetValue(dragIdx, out var db) ? db : SystemIcons.Application.ToBitmap();
@@ -326,44 +357,34 @@ public class MainForm : Form
         }
     }
 
-    // Her karede genel ses seviyesine bakar. Ses aniden yükseldiğinde (bir vuruş/beat
-    // olduğunda), YERDEKİ VE HAVADAKİ TÜM simgeler AYNI ANDA zıplar - ama hepsi birebir
-    // aynı yüksekliğe değil, her birine küçük rastgele bir fark (biri biraz daha yüksek,
-    // biri biraz daha alçak) veriyoruz ki doğal/canlı görünsün.
+    // Ses vuruşu algılandığında tüm simgeleri birlikte zıplatır.
+    // Hangi frekans aralığına (vokal/bas/tiz/genel) bakılacağı, duyarlılık,
+    // zıplama gücü ve çeşitliliği kullanıcının ayarlarından gelir.
     private void ProcessAudioReactivity()
     {
-        if (_audioAnalyzer == null) return;
+        if (_audioAnalyzer == null || !_settings.AudioReactionEnabled) return;
 
-        float level = _audioAnalyzer.VocalLevel;
+        float level = _audioAnalyzer.GetLevel(_settings.AudioMode);
 
-        _volumeLogCounter++;
-        if (_volumeLogCounter >= 90) // ~1.5 saniyede bir
-        {
-            _volumeLogCounter = 0;
-            Log($"[ses izleme] anlık seviye={level:0.00} taban={_volumeBaseline:0.00}");
-        }
+        // Duyarlılık arttıkça eşikler düşer (küçük seslere de tepki verir)
+        float riseThreshold = BaseRiseThreshold / Math.Max(0.2f, _settings.Sensitivity);
+        float minLevel = BaseMinLevel / Math.Max(0.2f, _settings.Sensitivity);
 
-        // Ses, yavaşça takip eden "taban" seviyesinin belirgin şekilde üzerine
-        // çıktığında bunu bir vuruş (beat) sayıyoruz - kare-kare fark almaktan
-        // çok daha tutarlı, gerçek vurgu anlarıyla daha iyi örtüşüyor.
-        bool isBeat = level > _volumeBaseline + OverallRiseThreshold && level > MinOverallLevel;
-
-        // Taban, vuruş anında değil normal seyirde yavaşça sesi takip etsin
+        bool isBeat = level > _volumeBaseline + riseThreshold && level > minLevel;
         _volumeBaseline = _volumeBaseline * (1 - BaselineSmoothing) + level * BaselineSmoothing;
 
         if (!isBeat) return;
         var now = DateTime.Now;
-        if (now - _lastGlobalTrigger < GlobalCooldown) return;
+        if ((now - _lastGlobalTrigger).TotalMilliseconds < _settings.CooldownMs) return;
         _lastGlobalTrigger = now;
 
-        float rise = level - _volumeBaseline;
-        Log($"Ses vuruşu algılandı: seviye={level:0.00} taban={_volumeBaseline:0.00}");
-
         RECT listRect = _iconManager.GetListViewScreenRect();
-        float baseStrength = 260f + rise * 750f + level * 280f;
-        baseStrength = Math.Min(baseStrength, 780f);
+        float rise = level - _volumeBaseline;
+        float baseStrength = (260f + rise * 750f + level * 280f) * _settings.JumpStrength;
+        baseStrength = Math.Min(baseStrength, 780f * _settings.JumpStrength);
 
-        // Yerdeki (yerleşmiş) simgeleri zıplat
+        float varianceRange = 160f * _settings.JumpVariance;
+
         foreach (var kv in _finalPositions.ToList())
         {
             int index = kv.Key;
@@ -372,38 +393,51 @@ public class MainForm : Form
             var screen = Screen.FromPoint(screenPoint);
             var (minX, maxX, minY, floorY) = ComputeThrowBounds(screen, listRect);
 
-            // Her simgeye küçük, birbirinden farklı bir sapma - hepsi aynı yükseklikte
-            // durmasın ama çok da uzak olmasın (yaklaşık %20'lik doğal fark)
-            float variance = (float)(_rng.NextDouble() * 160 - 80);
+            float variance = (float)(_rng.NextDouble() * varianceRange - varianceRange / 2);
             float vy = -(baseStrength + variance);
             float vx = (float)(_rng.NextDouble() * 200 - 100);
 
-            // Gerçek Windows simgesini gizle - aksi halde eski yerinde bir "klon"
-            // olarak görünmeye devam ediyordu, overlay'deki animasyonlu kopyayla birlikte.
+            // Gerçek simgeyi gizle - overlay'deki animasyonlu kopya gösterilecek
             _iconManager.SetIconPosition(index, -3000, -3000);
 
             _finalPositions.Remove(index);
             _activeAnimations.RemoveAll(a => a.IconIndex == index);
-            _activeAnimations.Add(new ThrownIcon(index, pos.X, pos.Y, vx, vy, minX, maxX, minY, floorY, _rng));
+            _activeAnimations.Add(new ThrownIcon(index, pos.X, pos.Y, vx, vy,
+                minX, maxX, minY, floorY, _rng, _settings));
         }
 
-        // Hâlâ havada olanlara da (yeni animasyon oluşturmadan) ekstra itme ver
+        // Hâlâ havada olanlara ekstra itme
         foreach (var thrown in _activeAnimations.OfType<ThrownIcon>().ToList())
         {
-            float variance = (float)(_rng.NextDouble() * 120 - 60);
+            float variance = (float)(_rng.NextDouble() * varianceRange * 0.75f - varianceRange * 0.375f);
             float vx = (float)(_rng.NextDouble() * 160 - 80);
             thrown.ApplyImpulse(vx, -(baseStrength * 0.6f + variance));
         }
     }
 
+    // Çıkarken simgeleri açılıştaki yerlerine geri koy (ayara bağlı)
+    private void RestoreOriginalPositions()
+    {
+        foreach (var (index, pos) in _originalPositions)
+        {
+            _iconManager.SetIconPosition(index, pos.X, pos.Y);
+        }
+    }
+
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        if (_settings.RestoreIconsOnExit)
+        {
+            try { RestoreOriginalPositions(); } catch { }
+        }
+
         _mouseHook.Dispose();
         _animationTimer.Stop();
-        _iconManager.Dispose();
         _audioAnalyzer?.Dispose();
         _overlay?.Close();
+        _iconManager.Dispose();
         timeEndPeriod(1);
+
         if (_trayIcon != null)
         {
             _trayIcon.Visible = false;
